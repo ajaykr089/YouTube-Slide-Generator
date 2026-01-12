@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
+import { YoutubeTranscript } from 'youtube-transcript';
 
 const openai = new OpenAI({
   apiKey: process.env.GROK_API_KEY,
-  baseURL: 'https://api.x.ai/v1',
+  baseURL: 'https://api.groq.com/openai/v1',
 })
 
 export async function POST(request: NextRequest) {
@@ -16,19 +17,19 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
-
-    const content = transcript || topic
-
+const description =await YoutubeTranscript.fetchTranscript(link);
+const fullText = description.map(t => t.text).join(" ");
+    // const content = YoutubeTranscript.fetchTranscript(link).then(console.log);
     // Create a comprehensive prompt for Grok
-    const prompt = `You are Grok, an AI expert at converting educational YouTube videos into professional presentation slides. You are helpful and create high-quality educational content.
+    const prompt = `You are Grok, an AI expert at converting this YouTube videos into professional presentation slides. You are helpful and create high-quality content.
 
 VIDEO TOPIC: ${topic}
 YOUTUBE LINK: ${link}
-TRANSCRIPT: ${content}
+TRANSCRIPT: ${transcript || fullText}
 
 TASK: Analyze this video content and create a complete presentation with the following structure:
 
-1. TITLE SLIDE (1 slide)
+1. TITLE SLIDE (1 slide) 
    - Main title
    - Subtitle/context
    - Brief overview
@@ -47,9 +48,9 @@ TASK: Analyze this video content and create a complete presentation with the fol
    - Summary points
 
 REQUIREMENTS:
-- Write in simple, clear, educational language
+- Write in simple, clear, professional language
 - Remove any irrelevant content (greetings, sponsors, personal anecdotes)
-- Focus on educational value
+- Focus on content value
 - Make content engaging and understandable
 - Add one visual/icon suggestion per slide
 - Include 1 short speaker note paragraph per slide
@@ -72,7 +73,7 @@ Return ONLY a JSON object with this exact structure:
 Analyze the content and create the slides now. Return only the JSON, no other text.`
 
     const completion = await openai.chat.completions.create({
-      model: 'grok-beta',
+      model: 'openai/gpt-oss-20b',
       messages: [
         {
           role: 'system',
@@ -99,15 +100,10 @@ Analyze the content and create the slides now. Return only the JSON, no other te
     }
 
     const slideData = JSON.parse(jsonMatch[0])
-
     // Convert to markdown format for display
-    const markdown = convertToMarkdown(slideData)
-
+    // const markdown = convertToMarkdown(slideData)
     return NextResponse.json({
       slides: slideData.slides,
-      markdown,
-      topicType: slideData.topicType,
-      summary: slideData.summary
     })
 
   } catch (error: any) {
@@ -118,19 +114,4 @@ Analyze the content and create the slides now. Return only the JSON, no other te
       { status: 500 }
     )
   }
-}
-
-function convertToMarkdown(data: any): string {
-  let markdown = ''
-
-  data.slides.forEach((slide: any, index: number) => {
-    markdown += `# Slide ${index + 1} — ${slide.title}\n`
-    slide.content.forEach((point: string) => {
-      markdown += `- ${point}\n`
-    })
-    markdown += `Notes:\n${slide.notes}\n\n`
-    markdown += `${slide.icon}\n\n`
-  })
-
-  return markdown
 }

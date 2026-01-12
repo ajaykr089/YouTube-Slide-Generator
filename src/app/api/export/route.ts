@@ -1,192 +1,404 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from "next/server";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import pptxgen from "pptxgenjs";
+export const runtime = "nodejs";
+import fs from "fs";
+import text2wav from "text2wav";
+
+async function generateAudio(slideNotes: string, slideIndex: number) {
+  const audioFileName = `slide_${slideIndex + 1}.wav`;
+  const buffer = await text2wav(slideNotes, { voice: "en-US", speed: 1 });
+  fs.writeFileSync(audioFileName, buffer);
+  return audioFileName;
+}
+
+type SlideIn = { title: string; content: string[]; notes?: string };
+
+async function createPPTWithAudio(
+  slides: { title: string; content: string[]; notes: string }[]
+) {
+  const pptx = new pptxgen();
+
+  for (let i = 0; i < slides.length; i++) {
+    const slide = pptx.addSlide();
+    slide.addText(slides[i].title, { x: 0.5, y: 0.5, fontSize: 24 });
+    slide.addText(slides[i].content.join("\n"), {
+      x: 0.5,
+      y: 1.5,
+      fontSize: 18,
+    });
+
+    if (slides[i].notes) {
+      const audioFile = await generateAudio(slides[i].notes, i);
+      slide.addMedia({
+        type: "audio",
+        path: audioFile,
+        x: 0.5,
+        y: 3,
+        w: 1,
+        h: 1,
+      });
+    }
+  }
+
+  await pptx.writeFile({ fileName: "presentation_with_audio.pptx" });
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { slides, format, topicType } = await request.json()
+    const { slides, format } = await request.json();
 
-    let content = ''
-    let filename = ''
-    let contentType = ''
+    let content = "";
+    let filename = "";
+    let contentType = "";
 
     switch (format) {
-      case 'ppt':
-        content = generatePowerPoint(slides)
-        filename = 'presentation.ppt'
-        contentType = 'application/vnd.ms-powerpoint'
-        break
+      case "markdown":
+        content = generateMarkdown(slides);
+        filename = "presentation.md";
+        contentType = "text/markdown";
+        break;
 
-      case 'google-slides':
-        content = generateGoogleSlides(slides)
-        filename = 'presentation.json'
-        contentType = 'application/json'
-        break
+      case "pptx":
+        {
+          const body = await generatePowerPoint(slides);
 
-      case 'keynote':
-        content = generateKeynote(slides)
-        filename = 'presentation.key'
-        contentType = 'application/vnd.apple.keynote'
-        break
+          return new NextResponse(body, {
+            headers: {
+              "Content-Type":
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+              "Content-Disposition": 'attachment; filename="presentation.pptx"',
+            },
+          });
+        }
 
-      case 'json':
-        content = JSON.stringify(slides, null, 2)
-        filename = 'presentation.json'
-        contentType = 'application/json'
-        break
+        break;
 
-      case 'pdf':
-        content = generatePDFStructure(slides)
-        filename = 'presentation.pdf'
-        contentType = 'application/pdf'
-        break
+      case "google-slides":
+        {
+          const body = await generateGoogleSlidesPPTX(slides);
 
-      default:
-        content = slides.markdown
-        filename = 'presentation.md'
-        contentType = 'text/markdown'
+          return new NextResponse(body, {
+            headers: {
+              "Content-Type":
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+              "Content-Disposition":
+                'attachment; filename="presentation-google-slides.pptx"',
+            },
+          });
+        }
+
+        break;
+
+      case "keynote":
+        content = generateKeynote(slides);
+        filename = "presentation.key";
+        contentType = "application/vnd.apple.keynote";
+        break;
+
+      case "json":
+        content = JSON.stringify(slides, null, 2);
+        filename = "presentation.json";
+        contentType = "application/json";
+        break;
+
+      case "pdf": {
+        const body = await generatePDFStructure(slides);
+        return new NextResponse(body, {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": 'attachment; filename="presentation.pdf"',
+          },
+        });
+      }
     }
 
     return new NextResponse(content, {
       headers: {
-        'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
-    })
-
+    });
   } catch (error) {
-    console.error('Error exporting slides:', error)
+    console.error("Error exporting slides:", error);
     return NextResponse.json(
-      { error: 'Failed to export slides' },
+      { error: "Failed to export slides" },
       { status: 500 }
-    )
+    );
   }
 }
 
-function generatePowerPoint(slides: any): string {
-  // Generate PowerPoint XML structure
-  let ppt = '<?xml version="1.0" encoding="UTF-8"?>\n'
-  ppt += '<ppt:presentation xmlns:ppt="http://schemas.openxmlformats.org/presentationml/2006/main">\n'
+function sanitizeText(text: string): string {
+  return text
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "") // emojis
+    .replace(/[\u200D\uFE0F]/g, "") // zero-width + variation selectors
+    .replace(/[^\x20-\x7E]/g, ""); // non WinAnsi chars
+}
+
+function generateMarkdown(slides: any): string {
+  let markdown = "";
 
   slides.forEach((slide: any, index: number) => {
-    ppt += `  <ppt:slide id="${index + 1}">\n`
-    ppt += `    <ppt:title>${slide.title}</ppt:title>\n`
-    ppt += '    <ppt:content>\n'
+    markdown += `# Slide ${index + 1} — ${slide.title}\n`;
     slide.content.forEach((point: string) => {
-      ppt += `      <ppt:paragraph>${point}</ppt:paragraph>\n`
-    })
-    ppt += '    </ppt:content>\n'
-    ppt += `    <ppt:notes>${slide.notes}</ppt:notes>\n`
-    ppt += '  </ppt:slide>\n'
-  })
-
-  ppt += '</ppt:presentation>'
-  return ppt
+      markdown += `- ${point}\n`;
+    });
+    markdown += `Notes:\n${slide.notes}\n\n`;
+    markdown += `${slide.icon}\n\n`;
+  });
+  return markdown;
 }
 
-function generateGoogleSlides(slides: any): string {
-  const googleSlides = {
-    title: 'YouTube Video Presentation',
-    slides: slides.map((slide: any, index: number) => ({
-      objectId: `slide_${index + 1}`,
-      slideProperties: {
-        layoutObjectId: 'LAYOUT_TITLE_AND_BODY',
-      },
-      pageElements: [
-        {
-          objectId: `title_${index + 1}`,
-          shape: {
-            text: {
-              textElements: [
-                {
-                  paragraphMarker: {
-                    style: { direction: 'LEFT_TO_RIGHT' }
-                  },
-                  textRun: {
-                    content: slide.title,
-                    style: {
-                      fontSize: { magnitude: 24, unit: 'PT' },
-                      bold: true
-                    }
-                  }
-                }
-              ]
-            }
-          },
-          transform: {
-            scaleX: 8.0,
-            scaleY: 1.0,
-            translateX: 0.5,
-            translateY: 0.5,
-            unit: 'PT'
-          }
-        },
-        {
-          objectId: `content_${index + 1}`,
-          shape: {
-            text: {
-              textElements: slide.content.map((point: string) => ({
-                paragraphMarker: { style: { direction: 'LEFT_TO_RIGHT' } },
-                textRun: {
-                  content: `• ${point}\n`,
-                  style: { fontSize: { magnitude: 14, unit: 'PT' } }
-                }
-              }))
-            }
-          },
-          transform: {
-            scaleX: 8.0,
-            scaleY: 4.0,
-            translateX: 0.5,
-            translateY: 2.0,
-            unit: 'PT'
-          }
-        }
-      ]
-    }))
-  }
+async function generatePowerPoint(slides: SlideIn[]): Promise<Buffer> {
+  const pptx = new pptxgen();
 
-  return JSON.stringify(googleSlides, null, 2)
+  slides.forEach((slide) => {
+    const s = pptx.addSlide();
+    let title_height = 1;
+    s.addText(slide.title, {
+      x: 0.5,
+      y: title_height,
+      fontSize: 28,
+      bold: true,
+    });
+
+    slide.content.forEach((point, i) => {
+      s.addText(point, {
+        x: 0.7,
+        y: 1.4 + i * 0.45,
+        fontSize: 16,
+        bullet: true,
+      });
+    });
+
+    if (slide.notes) {
+      s.addNotes(slide.notes);
+    }
+  });
+
+  const output = await pptx.write({ outputType: "nodebuffer" } as any);
+
+  // Normalize to Uint8Array (safe + typed)
+  return output instanceof Uint8Array
+    ? output
+    : new Uint8Array(output as ArrayBuffer);
 }
 
-function generateKeynote(slides: any): string {
-  // Simplified Keynote structure
-  let keynote = '<?xml version="1.0" encoding="UTF-8"?>\n'
-  keynote += '<keynote:presentation xmlns:keynote="http://developer.apple.com/keynote">\n'
+// async function generateGoogleSlidesPPTX(slides: SlideIn[]): Promise<Buffer> {
+//   const pptx = new pptxgen();
 
-  slides.forEach((slide: any, index: number) => {
-    keynote += `  <keynote:slide id="${index + 1}">\n`
-    keynote += `    <keynote:title>${slide.title}</keynote:title>\n`
-    keynote += '    <keynote:bullets>\n'
-    slide.content.forEach((point: string) => {
-      keynote += `      <keynote:bullet>${point}</keynote:bullet>\n`
-    })
-    keynote += '    </keynote:bullets>\n'
-    keynote += `    <keynote:notes>${slide.notes}</keynote:notes>\n`
-    keynote += '  </keynote:slide>\n'
-  })
+//   slides.forEach((slideData, ind) => {
+//     const slide = pptx.addSlide();
 
-  keynote += '</keynote:presentation>'
-  return keynote
+//     // ---- TITLE ----
+//     const TITLE_Y = 0.3;
+//     const TITLE_H = 1.2; // enough height for wrapping
+
+//     slide.addText(slideData.title, {
+//       x: 0.5,
+//       y: TITLE_Y,
+//       w: 9,
+//       h: TITLE_H,
+//       fontSize: 34,
+//       bold: true,
+//       fontFace: "Arial",
+//       color: "1F2937",
+//       valign: "middle",
+//       wrap: true,
+//     });
+
+//     // ---- BODY ----
+//     slideData.content.forEach((point, i) => {
+//       slide.addText(point, {
+//         x: 0.7,
+//         y: TITLE_Y + TITLE_H + 0.5 + i * 0.45, // stacked bullets
+//         w: 8.5,
+//         fontSize: 20,
+//         fontFace: "Arial",
+//         color: "374151",
+//         bullet: true,
+//         lineSpacing: 26,
+//       });
+//     });
+
+//     // ---- NOTES ----
+//     if (slideData.notes) slide.addNotes(slideData.notes);
+//   });
+
+//   const buf = await pptx.write({ outputType: "nodebuffer" } as any);
+//   return buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+// }
+
+// function generateKeynote(slides: any): string {
+//   // Simplified Keynote structure
+//   let keynote = '<?xml version="1.0" encoding="UTF-8"?>\n';
+//   keynote +=
+//     '<keynote:presentation xmlns:keynote="http://developer.apple.com/keynote">\n';
+
+//   slides.forEach((slide: any, index: number) => {
+//     keynote += `  <keynote:slide id="${index + 1}">\n`;
+//     keynote += `    <keynote:title>${slide.title}</keynote:title>\n`;
+//     keynote += "    <keynote:bullets>\n";
+//     slide.content.forEach((point: string) => {
+//       keynote += `      <keynote:bullet>${point}</keynote:bullet>\n`;
+//     });
+//     keynote += "    </keynote:bullets>\n";
+//     keynote += `    <keynote:notes>${slide.notes}</keynote:notes>\n`;
+//     keynote += "  </keynote:slide>\n";
+//   });
+
+//   keynote += "</keynote:presentation>";
+//   return keynote;
+// }
+
+async function generateGoogleSlidesPPTX(slides: SlideIn[]): Promise<Buffer> {
+  const pptx = new pptxgen();
+
+  slides.forEach((slideData) => {
+    const slide = pptx.addSlide();
+
+    // ---- TITLE ----
+    slide.addText(slideData.title, {
+      x: 0.5,
+      y: 0.3,
+      w: 9,
+      h: 1.2,
+      fontSize: 34,
+      bold: true,
+      fontFace: "Arial",
+      color: "1F2937",
+      valign: "middle",
+      wrap: true,
+    });
+
+    // ---- BODY (single text box) ----
+    const bodyText = slideData.content.join("\n");
+
+    slide.addText(bodyText, {
+      x: 0.7,
+      y: 2.1,
+      w: 8.5,
+      h: 4.5,
+      fontSize: 20,
+      fontFace: "Arial",
+      color: "374151",
+      bullet: true,
+      wrap: true,
+      valign: "top",
+      lineSpacing: 26,
+    });
+
+    // ---- NOTES ----
+    if (slideData.notes) {
+      slide.addNotes(slideData.notes);
+    }
+  });
+
+  const buf = await pptx.write({ outputType: "nodebuffer" } as any);
+  return Buffer.from(buf);
 }
 
-function generatePDFStructure(slides: any): string {
-  // Generate a simple PDF structure (would need a PDF library for actual PDF)
-  let pdf = '%PDF-1.4\n'
+function generateKeynote(slides: SlideIn[]): string {
+  // Start Keynote XML
+  let keynote = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+  keynote += `<keynote:presentation xmlns:keynote="http://developer.apple.com/keynote">\n`;
 
-  slides.forEach((slide: any, index: number) => {
-    pdf += `${index + 1} 0 obj\n`
-    pdf += '<<\n'
-    pdf += '/Type /Page\n'
-    pdf += '/Parent 2 0 R\n'
-    pdf += '/Resources <<\n'
-    pdf += '/Font <<\n'
-    pdf += '/F1 4 0 R\n'
-    pdf += '>>\n'
-    pdf += '>>\n'
-    pdf += '/Contents 5 0 R\n'
-    pdf += '>>\n'
-    pdf += 'endobj\n'
-  })
+  slides.forEach((slide, index) => {
+    keynote += `  <keynote:slide id="slide_${index + 1}">\n`;
 
-  pdf += '%%EOF\n'
-  return pdf
+    // Title
+    keynote += `    <keynote:title>${escapeXML(slide.title)}</keynote:title>\n`;
+
+    // Bullets / body
+    keynote += `    <keynote:bullets>\n`;
+    slide.content.forEach((point) => {
+      keynote += `      <keynote:bullet>${escapeXML(point)}</keynote:bullet>\n`;
+    });
+    keynote += `    </keynote:bullets>\n`;
+
+    // Notes
+    if (slide.notes) {
+      keynote += `    <keynote:notes>${escapeXML(
+        slide.notes
+      )}</keynote:notes>\n`;
+    }
+
+    keynote += `  </keynote:slide>\n`;
+  });
+
+  keynote += `</keynote:presentation>\n`;
+  return keynote;
 }
+
+// Helper to escape special XML characters
+function escapeXML(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+export async function generatePDFStructure(slides: any[]): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+  slides.forEach((slide) => {
+    const page = pdfDoc.addPage([595, 842]); // A4
+    const { height } = page.getSize();
+
+    let y = height - 80;
+    const title = sanitizeText(slide.title || "Slide");
+    // Title
+    page.drawText(slide.title || "Slide", {
+      x: 50,
+      y,
+      size: 24,
+      font,
+      color: rgb(0, 0, 0),
+    });
+
+    y -= 40;
+
+    // Content
+    slide.content?.forEach((line: string) => {
+      const safeLine = sanitizeText(line);
+      page.drawText(safeLine, {
+        x: 50,
+        y,
+        size: 14,
+        font,
+      });
+      y -= 20;
+    });
+  });
+
+  return await pdfDoc.save();
+}
+
+// Helper function: split long text into lines that fit maxWidth
+// function splitText(
+//   text: string,
+//   fontSize: number,
+//   font: any,
+//   maxWidth: number
+// ): string[] {
+//   const words = text.split(" ");
+//   const lines: string[] = [];
+//   let currentLine = "";
+
+//   words.forEach((word) => {
+//     const testLine = currentLine ? currentLine + " " + word : word;
+//     const textWidth = font.widthOfTextAtSize(testLine, fontSize);
+//     if (textWidth > maxWidth) {
+//       if (currentLine) lines.push(currentLine);
+//       currentLine = word;
+//     } else {
+//       currentLine = testLine;
+//     }
+//   });
+
+//   if (currentLine) lines.push(currentLine);
+//   return lines;
+// }
