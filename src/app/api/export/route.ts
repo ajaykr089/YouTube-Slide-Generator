@@ -5,44 +5,7 @@ export const runtime = "nodejs";
 import fs from "fs";
 import text2wav from "text2wav";
 
-async function generateAudio(slideNotes: string, slideIndex: number) {
-  const audioFileName = `slide_${slideIndex + 1}.wav`;
-  const buffer = await text2wav(slideNotes, { voice: "en-US", speed: 1 });
-  fs.writeFileSync(audioFileName, buffer);
-  return audioFileName;
-}
-
 type SlideIn = { title: string; content: string[]; notes?: string };
-
-async function createPPTWithAudio(
-  slides: { title: string; content: string[]; notes: string }[]
-) {
-  const pptx = new pptxgen();
-
-  for (let i = 0; i < slides.length; i++) {
-    const slide = pptx.addSlide();
-    slide.addText(slides[i].title, { x: 0.5, y: 0.5, fontSize: 24 });
-    slide.addText(slides[i].content.join("\n"), {
-      x: 0.5,
-      y: 1.5,
-      fontSize: 18,
-    });
-
-    if (slides[i].notes) {
-      const audioFile = await generateAudio(slides[i].notes, i);
-      slide.addMedia({
-        type: "audio",
-        path: audioFile,
-        x: 0.5,
-        y: 3,
-        w: 1,
-        h: 1,
-      });
-    }
-  }
-
-  await pptx.writeFile({ fileName: "presentation_with_audio.pptx" });
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -61,7 +24,8 @@ export async function POST(request: NextRequest) {
 
       case "pptx":
         {
-          const body = await generatePowerPoint(slides);
+          const buffer = await generatePowerPoint(slides);
+          const body = new Uint8Array(buffer);
 
           return new NextResponse(body, {
             headers: {
@@ -71,12 +35,12 @@ export async function POST(request: NextRequest) {
             },
           });
         }
-
         break;
 
       case "google-slides":
         {
-          const body = await generateGoogleSlidesPPTX(slides);
+          const buffer = await generateGoogleSlidesPPTX(slides);
+          const body = new Uint8Array(buffer);
 
           return new NextResponse(body, {
             headers: {
@@ -103,7 +67,9 @@ export async function POST(request: NextRequest) {
         break;
 
       case "pdf": {
-        const body = await generatePDFStructure(slides);
+        const buffer = await generatePDFStructure(slides);
+        const body = new Uint8Array(buffer);
+
         return new NextResponse(body, {
           headers: {
             "Content-Type": "application/pdf",
@@ -154,21 +120,33 @@ async function generatePowerPoint(slides: SlideIn[]): Promise<Buffer> {
 
   slides.forEach((slide) => {
     const s = pptx.addSlide();
-    let title_height = 1;
+
+    const TITLE_Y = 0.5;
+    const GAP = 0.15;
+    const titleHeight = estimateTitleHeight(slide.title);
     s.addText(slide.title, {
       x: 0.5,
-      y: title_height,
-      fontSize: 28,
+      y: TITLE_Y,
+      w: 9,
+      h: titleHeight,
+      fontSize: 30,
       bold: true,
+      wrap: true,
+      valign: "top",
     });
 
-    slide.content.forEach((point, i) => {
-      s.addText(point, {
-        x: 0.7,
-        y: 1.4 + i * 0.45,
-        fontSize: 16,
-        bullet: true,
-      });
+    const bodyText = slide.content.join("\n");
+
+    s.addText(bodyText, {
+      x: 0.7,
+      y: TITLE_Y + titleHeight + GAP,
+      w: 8.5,
+      h: 5.2 - titleHeight, // remaining space
+      fontSize: 16,
+      bullet: true,
+      wrap: true,
+      valign: "top",
+      lineSpacing: 22,
     });
 
     if (slide.notes) {
@@ -178,10 +156,8 @@ async function generatePowerPoint(slides: SlideIn[]): Promise<Buffer> {
 
   const output = await pptx.write({ outputType: "nodebuffer" } as any);
 
-  // Normalize to Uint8Array (safe + typed)
-  return output instanceof Uint8Array
-    ? output
-    : new Uint8Array(output as ArrayBuffer);
+  // Normalize to Buffer (safe + typed)
+  return Buffer.from(output);
 }
 
 // async function generateGoogleSlidesPPTX(slides: SlideIn[]): Promise<Buffer> {
@@ -250,25 +226,33 @@ async function generatePowerPoint(slides: SlideIn[]): Promise<Buffer> {
 //   keynote += "</keynote:presentation>";
 //   return keynote;
 // }
+function estimateTitleHeight(text: string): number {
+  const charsPerLine = 45; // depends on font + width
+  const lineHeight = 0.45; // inches for 30px font
+
+  const lines = Math.ceil(text.length / charsPerLine);
+  return Math.min(lines * lineHeight, 1.6); // cap height
+}
 
 async function generateGoogleSlidesPPTX(slides: SlideIn[]): Promise<Buffer> {
   const pptx = new pptxgen();
 
   slides.forEach((slideData) => {
     const slide = pptx.addSlide();
+    const titleHeight = estimateTitleHeight(slideData.title);
+    const TITLE_Y = 1;
+    const TITLE_H = 0;
+    const GAP = 0.15;
 
-    // ---- TITLE ----
     slide.addText(slideData.title, {
       x: 0.5,
-      y: 0.3,
+      y: TITLE_Y,
       w: 9,
-      h: 1.2,
-      fontSize: 34,
+      h: titleHeight,
+      fontSize: 30,
       bold: true,
-      fontFace: "Arial",
-      color: "1F2937",
-      valign: "middle",
       wrap: true,
+      valign: "top", // 🔥 important
     });
 
     // ---- BODY (single text box) ----
@@ -276,12 +260,10 @@ async function generateGoogleSlidesPPTX(slides: SlideIn[]): Promise<Buffer> {
 
     slide.addText(bodyText, {
       x: 0.7,
-      y: 2.1,
+      y: TITLE_Y + titleHeight + GAP,
       w: 8.5,
-      h: 4.5,
+      h: 5.2 - titleHeight, // dynamic remaining space
       fontSize: 20,
-      fontFace: "Arial",
-      color: "374151",
       bullet: true,
       wrap: true,
       valign: "top",
@@ -294,7 +276,7 @@ async function generateGoogleSlidesPPTX(slides: SlideIn[]): Promise<Buffer> {
     }
   });
 
-  const buf = await pptx.write({ outputType: "nodebuffer" } as any);
+  const buf: any = await pptx.write({ outputType: "nodebuffer" } as any);
   return Buffer.from(buf);
 }
 
