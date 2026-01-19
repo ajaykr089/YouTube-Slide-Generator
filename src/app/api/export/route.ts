@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     let contentType = "";
 
     switch (format) {
-      case "markdown":
+      case "md":
         content = generateMarkdown(slides);
         filename = "presentation.md";
         contentType = "text/markdown";
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
         break;
 
-      case "keynote":
+      case "key":
         content = generateKeynote(slides);
         filename = "presentation.key";
         contentType = "application/vnd.apple.keynote";

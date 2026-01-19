@@ -1,7 +1,7 @@
 "use client";
 import { DynamicIcon } from "lucide-react/dynamic";
 import { useState } from "react";
-
+import { exportList } from "./constant";
 interface Slide {
   title: string;
   content: string[];
@@ -74,37 +74,38 @@ export default function Home() {
     } else if (!validateYouTubeUrl(link)) {
       newErrors.link = "Please enter a valid YouTube URL";
     }
-
     setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) return;
 
-    if (Object.keys(newErrors).length === 0) {
-      setIsLoading(true);
-      try {
-        const response = await fetch("/api/generate-slides", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ topic, link, transcript }),
-        });
+    setIsLoading(true);
 
-        if (!response.ok) {
-          throw new Error("Failed to generate slides");
-        }
+    try {
+      const response = await fetch("/api/generate-slides", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ topic, link, transcript }),
+      });
 
-        const data = await response.json();
-        setSlides(data.slides);
-        setSlideData(data);
-      } catch (error: any) {
-        console.error("Error:", error);
-        const errorMessage = error?.message || "Unknown error";
-        alert(`Failed to generate slides: ${errorMessage}`);
-      } finally {
-        setIsLoading(false);
+      if (!response.ok) {
+        throw new Error("Failed to generate slides");
       }
+
+      const data = await response.json();
+      setSlides(data.slides);
+      setSlideData(data);
+    } catch (error: any) {
+      console.error("Error:", error);
+      const errorMessage = error?.message || "Unknown error";
+      alert(`Failed to generate slides: ${errorMessage}`);
+    } finally {
+      setIsLoading(false);
     }
   };
-
+  {
+    console.log(errors, "errors");
+  }
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 py-10 px-4">
       <div className="mx-auto max-w-5xl">
@@ -136,7 +137,7 @@ export default function Home() {
             value={topic}
             onChange={(e) => {
               setTopic(e.target.value);
-              if (errors.topic) setErrors({ ...errors, topic: undefined });
+              if (errors.topic) setErrors({ ...errors, topic: "" });
             }}
             className={`w-full px-4 py-3 rounded-lg border text-sm transition focus:outline-none focus:ring-2 ${
               errors.topic
@@ -144,10 +145,11 @@ export default function Home() {
                 : "border-gray-300 focus:ring-blue-500"
             }`}
             placeholder="e.g. How React Hooks Work"
+            // required
           />
 
           {errors.topic && (
-            <p className="mt-1 text-sm text-red-600">{errors.topic}</p>
+            <p className="mt-1 text-sm text-red-600">{errors?.topic}</p>
           )}
         </div>
 
@@ -164,7 +166,7 @@ export default function Home() {
             value={link}
             onChange={(e) => {
               setLink(e.target.value);
-              if (errors.link) setErrors({ ...errors, link: undefined });
+              if (errors.link) setErrors({ ...errors, link: "" });
             }}
             className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 ${
               errors.link
@@ -172,7 +174,7 @@ export default function Home() {
                 : "border-gray-300 focus:ring-blue-500"
             }`}
             placeholder="https://www.youtube.com/watch?v=..."
-            required
+            // required
           />
           <p className="text-xs text-gray-500 mb-1">
             Paste a valid YouTube video URL
@@ -205,7 +207,7 @@ export default function Home() {
           disabled={isLoading}
           className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-60 flex items-center justify-center gap-2"
         >
-          {isLoading ? (
+          {Object.values(errors).length == 0 && isLoading ? (
             <>
               <svg
                 className="h-5 w-5 animate-spin"
@@ -244,53 +246,25 @@ export default function Home() {
 
             {/* Buttons */}
             <div className="grid grid-cols-2 gap-3 md:flex md:flex-nowrap md:gap-3">
-              <button
-                onClick={() => exportSlides("markdown")}
-                className="w-full md:w-auto rounded-md bg-gray-600 px-4 py-2 text-sm text-white hover:bg-gray-700"
-              >
-                📄 Markdown
-              </button>
-
-              <button
-                onClick={() => exportSlides("pptx")}
-                className="w-full md:w-auto rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
-              >
-                📊 PowerPoint
-              </button>
-
-              <button
-                onClick={() => exportSlides("google-slides")}
-                className="w-full md:w-auto rounded-md bg-green-600 px-4 py-2 text-sm text-white hover:bg-green-700"
-              >
-                🎨 Google Slides
-              </button>
-
-              <button
-                onClick={() => exportSlides("json")}
-                className="w-full md:w-auto rounded-md bg-purple-600 px-4 py-2 text-sm text-white hover:bg-purple-700"
-              >
-                💾 JSON
-              </button>
-
-              <button
-                onClick={() => exportSlides("pdf")}
-                className="w-full md:w-auto rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
-              >
-                📕 PDF
-              </button>
-
-              <button
-                onClick={() => exportSlides("keynote")}
-                className="w-full md:w-auto rounded-md bg-gray-800 px-4 py-2 text-sm text-white hover:bg-gray-900"
-              >
-                🍎 Keynote
-              </button>
+              {exportList &&
+                exportList?.map((item) => {
+                  return (
+                    <button
+                      key={item?.id}
+                      onClick={() => exportSlides(item?.format)}
+                      className={`${item?.bgColor} w-full md:w-auto rounded-md px-4 py-2 text-sm text-white`}
+                    >
+                      {item?.label}
+                    </button>
+                  );
+                })}
             </div>
           </div>
 
           <div className="grid gap-6">
             {slideData.slides.map((slide: Slide, index: number) => (
               <div
+                data-testid="slide"
                 key={index}
                 className="rounded-2xl bg-white shadow-md border border-gray-200 p-6 hover:shadow-lg transition"
               >
@@ -330,70 +304,3 @@ export default function Home() {
     </div>
   );
 }
-
-// function generateSlides(
-//   topic: string,
-//   link: string,
-//   transcript: string
-// ): string {
-//   // Simple slide generation logic
-//   let content = transcript || topic;
-
-//   // Clean content: remove intros, jokes, sponsors, etc.
-//   content = content
-//     .replace(
-//       /hey guys|welcome back|thanks for watching|subscribe|like|follow/gi,
-//       ""
-//     )
-//     .replace(/\s+/g, " ")
-//     .trim();
-
-//   // Extract key points (basic implementation)
-//   const sentences = content.split(/[.!?]+/).filter((s) => s.trim().length > 10);
-
-//   // Create slides
-//   let slides = `# Slide 1 — ${topic}\n`;
-//   slides += `- Introduction\n`;
-//   slides += `- Context: ${topic}\n`;
-//   slides += `- Source: YouTube Video\n`;
-//   slides += `Notes:\nThis slide introduces the main topic of the YouTube video.\n\n`;
-//   slides += `💡 Icon: Video play button\n\n`;
-
-//   slides += `# Slide 2 — Agenda\n`;
-//   slides += `- Overview of main points\n`;
-//   slides += `- Key concepts and sections\n`;
-//   slides += `- Summary and takeaways\n`;
-//   slides += `Notes:\nThis presentation outlines the structure of the video content.\n\n`;
-//   slides += `📋 Icon: Checklist or list\n\n`;
-
-//   // Content slides
-//   const numContentSlides = Math.min(4, sentences.length);
-//   for (let i = 0; i < numContentSlides; i++) {
-//     const sentence = sentences[i].trim();
-//     // Break into bullet points
-//     const words = sentence.split(" ");
-//     const points = [];
-//     for (let j = 0; j < words.length; j += 5) {
-//       points.push(words.slice(j, j + 5).join(" "));
-//     }
-
-//     slides += `# Slide ${i + 3} — Key Concept ${i + 1}\n`;
-//     points.slice(0, 4).forEach((point) => {
-//       slides += `- ${point}\n`;
-//     });
-//     slides += `Notes:\nDetailed explanation of concept ${
-//       i + 1
-//     } from the video.\n\n`;
-//     slides += `🎯 Icon: Target or lightbulb\n\n`;
-//   }
-
-//   // Final slide
-//   slides += `# Slide ${numContentSlides + 3} — Summary\n`;
-//   slides += `- Key takeaways from the video\n`;
-//   slides += `- Main points covered\n`;
-//   slides += `- Thank you for watching\n`;
-//   slides += `Notes:\nThis summarizes the main ideas and conclusions from the YouTube video.\n\n`;
-//   slides += `✅ Icon: Checkmark or summary chart`;
-
-//   return slides;
-// }
